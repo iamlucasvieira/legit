@@ -20,7 +20,7 @@ impl Settings {
         let default_config = include_str!("config/default.ini");
         Config::builder()
             .add_source(File::from_str(default_config, config::FileFormat::Ini))
-            .add_source(File::with_name(".git/config").required(false))
+            .add_source(File::new(".git/config", config::FileFormat::Ini).required(false))
             .add_source(Environment::with_prefix("LEGIT"))
             .build()?
             .try_deserialize()

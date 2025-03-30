@@ -19,6 +19,9 @@ enum Command {
         /// The path to the repository
         path: Option<OsString>,
     },
+
+    /// Display information about the repository
+    Config {},
 }
 
 fn main() {
@@ -36,6 +39,18 @@ fn main() {
                         std::process::exit(1);
                     }
                     println!("Initialized empty git repository in {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Config {} => {
+            let repo = Repository::new(&std::env::current_dir().unwrap());
+            match repo {
+                Ok(repo) => {
+                    println!("{:#?}", repo.settings);
                 }
                 Err(e) => {
                     eprintln!("{}", e);
