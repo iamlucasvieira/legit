@@ -9,28 +9,35 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// The path to the repository
+    path: Option<OsString>,
 }
 
 #[derive(Parser, Debug)]
 enum Command {
     /// Initialize a new git repository
     Init {
-        #[arg()]
         /// The path to the repository
         path: Option<OsString>,
     },
 
     /// Display information about the repository
-    Config {},
+    Config,
 }
 
 fn main() {
     let args = Cli::parse();
 
+    let base_path = args
+        .path
+        .clone()
+        .map_or(std::env::current_dir().unwrap(), PathBuf::from);
+
     match args.command {
         Command::Init { path } => {
             println!("Initializing repository...");
-            let path = path.map_or(std::env::current_dir().unwrap(), PathBuf::from);
+            let path = path.map_or(base_path.clone(), PathBuf::from);
             let repo = Repository::new(&path);
             match repo {
                 Ok(repo) => {
@@ -46,8 +53,8 @@ fn main() {
                 }
             }
         }
-        Command::Config {} => {
-            let repo = Repository::new(&std::env::current_dir().unwrap());
+        Command::Config => {
+            let repo = Repository::new(&base_path);
             match repo {
                 Ok(repo) => {
                     println!("{:#?}", repo.settings);
