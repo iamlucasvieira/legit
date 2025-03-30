@@ -18,8 +18,10 @@ pub struct Settings {
 impl Settings {
     // Create a new settings, receives a file path
     pub fn new(use_config_path: Option<&Path>) -> Result<Settings, ConfigError> {
+        // read as string
+        let default_config = include_str!("config/default.ini");
         let mut builder = Config::builder()
-            .add_source(File::with_name("src/config/default"))
+            .add_source(File::from_str(default_config, config::FileFormat::Ini))
             .add_source(Environment::with_prefix("LEGIT"));
 
         if let Some(path) = use_config_path {

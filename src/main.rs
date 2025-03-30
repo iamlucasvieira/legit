@@ -1,5 +1,4 @@
-use anyhow::Context;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::Parser;
 use legit::Repository;
 use std::ffi::OsString;
 use std::path::PathBuf;
