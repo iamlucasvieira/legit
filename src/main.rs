@@ -29,10 +29,13 @@ enum Command {
 fn main() {
     let args = Cli::parse();
 
-    let base_path = args
-        .path
-        .clone()
-        .map_or(std::env::current_dir().unwrap(), PathBuf::from);
+    let base_path = match args.path {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir().unwrap_or_else(|_| {
+            eprintln!("Failed to get current directory");
+            std::process::exit(1);
+        }),
+    };
 
     match args.command {
         Command::Init { path } => {
@@ -54,7 +57,7 @@ fn main() {
             }
         }
         Command::Config => {
-            let repo = Repository::new(&base_path);
+            let repo = Repository::find(&base_path);
             match repo {
                 Ok(repo) => {
                     println!("{:#?}", repo.settings);

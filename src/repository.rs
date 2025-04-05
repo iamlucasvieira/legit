@@ -1,6 +1,5 @@
 use crate::settings::Settings;
-use anyhow::{Context, Result};
-use std::env;
+use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,22 +12,13 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// Find the git directory and returns the Repository instance
-    pub fn find(path: Option<&Path>) -> Result<Repository> {
-        let path = match path {
-            Some(p) => p.to_owned(),
-            None => {
-                let current_dir = env::current_dir().context("Failed to get current directory")?;
-                current_dir.to_owned()
-            }
-        };
-
+    pub fn find(path: &Path) -> Result<Repository> {
         let gitdir = path.join(".git");
         if !gitdir.exists() {
             let parent = path
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
-            return Repository::find(Some(parent));
+            return Repository::find(parent);
         }
         let settings = Settings::new()?;
         Ok(Repository {
@@ -130,7 +120,7 @@ mod tests {
         let tempdir = TempDir::new().unwrap();
         let gitdir = tempdir.path().join(".git");
         fs::create_dir_all(gitdir).unwrap();
-        let repo = Repository::find(Some(tempdir.path())).unwrap();
+        let repo = Repository::find(tempdir.path()).unwrap();
         assert_eq!(repo.worktree, tempdir.path());
     }
 
@@ -142,14 +132,7 @@ mod tests {
         fs::create_dir_all(gitdir).unwrap();
         fs::create_dir_all(&subdir).unwrap();
 
-        let repo = Repository::find(Some(&subdir)).unwrap();
+        let repo = Repository::find(&subdir).unwrap();
         assert_eq!(repo.worktree, tempdir.path());
-    }
-
-    #[test]
-    /// Test that finds the git directory of the project itself
-    fn test_find_self() {
-        let repo = Repository::find(None).unwrap();
-        assert!(repo.worktree.ends_with("legit"));
     }
 }
