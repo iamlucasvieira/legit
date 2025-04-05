@@ -1,8 +1,8 @@
 use crate::settings::Settings;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::env;
 use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Repository represents a git repository
 #[derive(Debug)]
@@ -13,9 +13,34 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// Find the git directory and returns the Repository instance
+    pub fn find(path: Option<&Path>) -> Result<Repository> {
+        let path = match path {
+            Some(p) => p.to_owned(),
+            None => {
+                let current_dir = env::current_dir().context("Failed to get current directory")?;
+                current_dir.to_owned()
+            }
+        };
+
+        let gitdir = path.join(".git");
+        if !gitdir.exists() {
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+            return Repository::find(Some(parent));
+        }
+        let settings = Settings::new()?;
+        Ok(Repository {
+            worktree: path.to_owned(),
+            gitdir,
+            settings,
+        })
+    }
+
     /// Create a new Repository instance
     pub fn new(path: &Path) -> Result<Repository> {
-        let worktree = path.to_path_buf();
+        let worktree = path.to_owned();
         let gitdir = worktree.join(".git");
         let settings = Settings::new()?;
 
@@ -98,5 +123,33 @@ mod tests {
         for file in expected_files.iter() {
             assert!(tempdir.path().join(file).exists());
         }
+    }
+
+    #[test]
+    fn test_find() {
+        let tempdir = TempDir::new().unwrap();
+        let gitdir = tempdir.path().join(".git");
+        fs::create_dir_all(gitdir).unwrap();
+        let repo = Repository::find(Some(tempdir.path())).unwrap();
+        assert_eq!(repo.worktree, tempdir.path());
+    }
+
+    #[test]
+    fn test_find_parent() {
+        let tempdir = TempDir::new().unwrap();
+        let subdir = tempdir.path().join("subdir");
+        let gitdir = tempdir.path().join(".git");
+        fs::create_dir_all(gitdir).unwrap();
+        fs::create_dir_all(&subdir).unwrap();
+
+        let repo = Repository::find(Some(&subdir)).unwrap();
+        assert_eq!(repo.worktree, tempdir.path());
+    }
+
+    #[test]
+    /// Test that finds the git directory of the project itself
+    fn test_find_self() {
+        let repo = Repository::find(None).unwrap();
+        assert!(repo.worktree.ends_with("legit"));
     }
 }
