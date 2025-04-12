@@ -1,3 +1,4 @@
+mod objects;
 mod repository;
 mod settings;
 
