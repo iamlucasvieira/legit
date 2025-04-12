@@ -1,6 +1,7 @@
 use crate::Repository;
 use anyhow::{bail, Context, Result};
 use flate2::read::ZlibDecoder;
+use itertools::Itertools;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -94,34 +95,20 @@ pub fn read_object(repo: &Repository, hash: &GitHash) -> Result<Object> {
         .read_to_end(&mut buffer)
         .context("Failed to decompress object data")?;
 
-    // Parse header: expected format "type size\0"
-    let header_end = buffer
-        .iter()
-        .position(|&b| b == 0)
+    let (header, data) = buffer
+        .split(|&b| b == 0)
+        .collect_tuple()
+        .map(|(header, data)| (String::from_utf8_lossy(&header).into_owned(), data.to_vec()))
         .ok_or_else(|| anyhow::anyhow!("Invalid object header: missing null terminator"))?;
-    let header =
-        std::str::from_utf8(&buffer[..header_end]).context("Invalid UTF-8 in object header")?;
 
-    let mut parts = header.split(' ');
-    let type_str = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing object type in header"))?;
-
-    let size_str = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing object size in header"))?;
-
-    if parts.next().is_some() {
-        bail!("Invalid object header format: {}", header);
-    }
-    let object_type = ObjectType::from_str(type_str).context("Invalid object type in header")?;
-    let size: usize = size_str
-        .parse()
-        .context("Invalid size value in object header")?;
-    let data = buffer
-        .get(header_end + 1..)
-        .ok_or_else(|| anyhow::anyhow!("No object data found after header"))?
-        .to_vec();
+    let (object_type, size) = header
+        .split_once(' ')
+        .ok_or_else(|| anyhow::anyhow!("Invalid object header: missing type or size"))
+        .map(|(type_str, size_str)| -> Result<(ObjectType, usize)> {
+            let object_type = ObjectType::from_str(type_str).context("Invalid object type")?;
+            let size = size_str.parse::<usize>().context("Invalid size")?;
+            Ok((object_type, size))
+        })??;
 
     if data.len() != size {
         bail!(
@@ -181,11 +168,6 @@ mod tests {
             let (dir, file) = githash.as_path_parts();
             let object_path = repo.gitdir.join("objects").join(dir);
 
-            // Debug information
-            println!("GitDir: {}", repo.gitdir.display());
-            println!("Object dir to create: {}", object_path.display());
-
-            // Double check the directory exists
             std::fs::create_dir_all(&object_path).unwrap();
             let object_file = object_path.join(file);
 
