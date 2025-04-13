@@ -7,9 +7,12 @@ edition = "2021"
 anyhow = "1.0.97"
 clap = { version = "4.5.34", features = ["derive"] }
 config = { version = "0.15.11", features = ["ini"] }
+digest = "0.10.7"
 flate2 = "1.1.1"
+hex = "0.4.3"
 itertools = "0.14.0"
 serde = { version = "1.0.219", features = ["derive"] }
+sha1 = "0.10.6"
 strum = { version = "0.27.1", features = ["derive"] }
 toml = "0.8.20"
 

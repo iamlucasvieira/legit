@@ -1,75 +1,99 @@
 use crate::Repository;
 use anyhow::{bail, Context, Result};
+use digest::generic_array::typenum::U20;
+use digest::generic_array::GenericArray;
 use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use itertools::Itertools;
+use sha1::{Digest, Sha1};
 use std::fs::File;
 use std::io::Read;
+use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::EnumString;
 
 /// ObjectType represents the type of object in a git repository
-#[derive(Debug, PartialEq, EnumString)]
-enum ObjectType {
-    #[strum(ascii_case_insensitive)]
+#[derive(Debug, PartialEq, EnumString, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+pub enum ObjectType {
     Blob,
-    #[strum(ascii_case_insensitive)]
     Tree,
-    #[strum(ascii_case_insensitive)]
     Commit,
-    #[strum(ascii_case_insensitive)]
     Tag,
 }
 
 #[derive(Debug)]
 pub struct Object {
     pub object_type: ObjectType,
-    pub size: usize,
     pub data: Vec<u8>,
+    pub hash: ObjectHash,
 }
 
 impl Object {
-    pub fn new(object_type: ObjectType, size: usize, data: Vec<u8>) -> Self {
-        Object {
+    pub fn new(object_type: ObjectType, data: Vec<u8>) -> Result<Self> {
+        let object_data = format!(
+            "{} {}\0{}",
             object_type,
-            size,
+            data.len(),
+            String::from_utf8_lossy(&data)
+        );
+        let hash = ObjectHash::try_from(object_data.as_str()).context("Failed to hash object")?;
+        Ok(Object {
+            object_type,
             data,
-        }
+            hash,
+        })
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.len()
     }
 }
 
 /// A newtype for a Git hash which guarantees that the hash is exactly 20 bytes long.
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitHash([u8; 20]);
+pub struct ObjectHash(GenericArray<u8, U20>);
 
-impl GitHash {
-    /// Creates a new GitHash from a 20-byte array.
-    pub fn new(bytes: [u8; 20]) -> Self {
-        Self(bytes)
+impl TryFrom<&[u8]> for ObjectHash {
+    type Error = anyhow::Error;
+    fn try_from(slice: &[u8]) -> Result<Self> {
+        let mut hasher = Sha1::new();
+        hasher.update(slice);
+        let result = hasher.finalize();
+        if result.len() != 20 {
+            bail!("SHA-1 digest should be 20 bytes, got {}", result.len());
+        }
+        let mut bytes = GenericArray::<u8, U20>::default();
+        bytes.copy_from_slice(&result);
+        Ok(ObjectHash(bytes))
     }
+}
 
-    /// Returns the underlying bytes as a string slice.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the inner bytes are not valid UTF‑8.
-    pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).expect("GitHash bytes are not valid UTF-8")
+impl TryFrom<&str> for ObjectHash {
+    type Error = anyhow::Error;
+    fn try_from(s: &str) -> Result<Self> {
+        ObjectHash::try_from(s.as_bytes())
+    }
+}
+
+impl ObjectHash {
+    pub fn to_hex(&self) -> String {
+        self.0
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
     }
 
     /// Splits the string representation into the two components used by Git's
     /// object storage: the first two characters form the directory name and
     /// the remaining characters form the file name.
     pub fn as_path_parts(&self) -> (String, String) {
-        let s = self.as_str();
-        let (dir, file) = s.split_at(2);
+        let hex = self.to_hex();
+        let (dir, file) = hex.split_at(2);
         (dir.to_string(), file.to_string())
-    }
-}
-
-impl From<[u8; 20]> for GitHash {
-    fn from(bytes: [u8; 20]) -> Self {
-        GitHash::new(bytes)
     }
 }
 
@@ -80,7 +104,7 @@ impl From<[u8; 20]> for GitHash {
 /// The object file is stored compressed (zlib); after decompression, its header
 /// is expected to have the form "type size\0". This function parses the header,
 /// validates the size, and returns an `Object`.
-pub fn read_object(repo: &Repository, hash: &GitHash) -> Result<Object> {
+pub fn read_object(repo: &Repository, hash: &ObjectHash) -> Result<Object> {
     let (dir, file) = hash.as_path_parts();
     let object_path: PathBuf = repo.gitdir.join("objects").join(dir).join(file);
     if !object_path.exists() {
@@ -98,7 +122,7 @@ pub fn read_object(repo: &Repository, hash: &GitHash) -> Result<Object> {
     let (header, data) = buffer
         .split(|&b| b == 0)
         .collect_tuple()
-        .map(|(header, data)| (String::from_utf8_lossy(&header).into_owned(), data.to_vec()))
+        .map(|(header, data)| (String::from_utf8_lossy(header).into_owned(), data.to_vec()))
         .ok_or_else(|| anyhow::anyhow!("Invalid object header: missing null terminator"))?;
 
     let (object_type, size) = header
@@ -118,68 +142,67 @@ pub fn read_object(repo: &Repository, hash: &GitHash) -> Result<Object> {
         );
     }
 
-    Ok(Object::new(object_type, size, data))
+    Object::new(object_type, data)
+}
+
+fn write_object(obj: &Object, repo: &Repository) -> Result<ObjectHash> {
+    let (dir, file) = obj.hash.as_path_parts();
+    let object_path: PathBuf = repo.gitdir.join("objects").join(dir).join(file);
+    if object_path.exists() {
+        bail!("Object already exists at {}", object_path.display());
+    }
+
+    std::fs::create_dir_all(object_path.parent().unwrap()).with_context(|| {
+        format!(
+            "Failed to create directory for object: {}",
+            object_path.display()
+        )
+    })?;
+
+    let header = format!("{} {}\0", obj.object_type, obj.size());
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(header.as_bytes())?;
+    encoder.write_all(&obj.data)?;
+    let compressed_data = encoder.finish()?;
+
+    std::fs::write(&object_path, compressed_data)
+        .with_context(|| format!("Failed to write object file: {}", object_path.display()))?;
+
+    Ok(obj.hash.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::repository::Repository;
-    use flate2::write::ZlibEncoder;
-    use flate2::Compression;
-    use std::io::Write;
     use tempfile::TempDir;
 
-    const TEST_HASH: &[u8; 20] = b"1234567890abcdef1234";
     const TEST_DATA: &[u8] = b"test data";
 
     #[test]
-    fn test_git_hash_new() {
-        let hash = GitHash::new(*TEST_HASH);
-        assert!(hash.0 == *TEST_HASH);
-    }
-
-    #[test]
-    fn test_git_hash_as_str() {
-        let hash = GitHash::new(*TEST_HASH);
-        let hash_str = std::str::from_utf8(&hash.0).unwrap();
-        assert_eq!(hash.as_str(), hash_str);
+    fn test_git_hash_from_str() {
+        let hash_str = "1234567890abcdef1234";
+        let hash = ObjectHash::try_from(hash_str).unwrap();
+        assert_eq!(hash.0.len(), 20);
     }
 
     #[test]
     fn test_git_hash_as_path_parts() {
-        let hash = GitHash::new(*TEST_HASH);
+        let hash_str = "1234567890abcdef1234";
+        let hash = ObjectHash::try_from(hash_str).unwrap();
         let (dir, file) = hash.as_path_parts();
-        assert_eq!(dir, "12");
-        assert_eq!(file, "34567890abcdef1234");
+        assert_eq!(dir.len(), 2);
+        assert_eq!(file.len(), 38);
     }
 
     // Helper struct to ensure TempDir lives as long as Repository
     struct TestRepo(Repository);
 
     impl TestRepo {
-        pub fn new(hash: &[u8; 20], test_data: &[u8], tempdir: &TempDir) -> Self {
+        pub fn new(tempdir: &TempDir, object: &Object) -> Self {
             let repo = Repository::new(tempdir.path()).unwrap();
-
-            // Create the repository structure first
             repo.create().unwrap();
-
-            let githash = GitHash::new(*hash);
-            let (dir, file) = githash.as_path_parts();
-            let object_path = repo.gitdir.join("objects").join(dir);
-
-            std::fs::create_dir_all(&object_path).unwrap();
-            let object_file = object_path.join(file);
-
-            // Create proper Git object with header and zlib compression
-            let header = format!("blob {}\0", test_data.len());
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(header.as_bytes()).unwrap();
-            encoder.write_all(test_data).unwrap();
-            let compressed_data = encoder.finish().unwrap();
-
-            // Write the file and check it was created
-            std::fs::write(&object_file, compressed_data).unwrap();
+            write_object(object, &repo).unwrap();
             TestRepo(repo)
         }
     }
@@ -187,10 +210,9 @@ mod tests {
     #[test]
     fn test_read_object() {
         let tempdir = TempDir::new().unwrap();
-        let test_repo = TestRepo::new(TEST_HASH, TEST_DATA, &tempdir);
-        let githash = GitHash::new(*TEST_HASH);
-        let result = read_object(&test_repo.0, &githash);
-        println!("{:?}", result);
+        let object = Object::new(ObjectType::Blob, TEST_DATA.to_vec()).unwrap();
+        let test_repo = TestRepo::new(&tempdir, &object);
+        let result = read_object(&test_repo.0, &object.hash);
         assert!(result.is_ok());
     }
 }
