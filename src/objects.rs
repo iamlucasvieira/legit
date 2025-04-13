@@ -7,7 +7,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use itertools::Itertools;
 use sha1::{Digest, Sha1};
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 use std::fs::File;
 use std::io::{Read, Write as _};
 use std::path::PathBuf;
@@ -65,6 +65,7 @@ impl Object {
 pub struct ObjectHash(GenericArray<u8, U20>);
 
 impl ObjectHash {
+    /// Convert a hexadecimal string representation of a hash into an ObjectHash.
     pub fn from_hex(hex: &str) -> Result<Self> {
         if hex.len() != 40 {
             bail!(
@@ -89,6 +90,23 @@ impl ObjectHash {
         let mut array = GenericArray::<u8, U20>::default();
         array.copy_from_slice(&bytes);
         Ok(ObjectHash(array))
+    }
+
+    /// Convert the hash to a hexadecimal string representation.
+    pub fn to_hex(&self) -> String {
+        self.0.iter().fold(String::new(), |mut output, b| {
+            let _ = write!(output, "{b:02X}");
+            output
+        })
+    }
+
+    /// Splits the string representation into the two components used by Git's
+    /// object storage: the first two characters form the directory name and
+    /// the remaining characters form the file name.
+    pub fn as_path_parts(&self) -> (String, String) {
+        let hex = self.to_hex();
+        let (dir, file) = hex.split_at(2);
+        (dir.to_string(), file.to_string())
     }
 }
 
@@ -118,21 +136,9 @@ impl TryFrom<&str> for ObjectHash {
     }
 }
 
-impl ObjectHash {
-    pub fn to_hex(&self) -> String {
-        self.0.iter().fold(String::new(), |mut output, b| {
-            let _ = write!(output, "{b:02X}");
-            output
-        })
-    }
-
-    /// Splits the string representation into the two components used by Git's
-    /// object storage: the first two characters form the directory name and
-    /// the remaining characters form the file name.
-    pub fn as_path_parts(&self) -> (String, String) {
-        let hex = self.to_hex();
-        let (dir, file) = hex.split_at(2);
-        (dir.to_string(), file.to_string())
+impl Display for ObjectHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex())
     }
 }
 

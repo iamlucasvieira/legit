@@ -1,5 +1,5 @@
 use clap::Parser;
-use legit::objects::{read_object, ObjectHash, ObjectType};
+use legit::objects::{read_object, write_object, Object, ObjectHash, ObjectType};
 use legit::Repository;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -34,6 +34,20 @@ enum Command {
 
         /// The hash of the object
         hash: String,
+    },
+
+    /// Hash a file
+    HashFile {
+        /// The type of the object (e.g., commit, tree, blob)
+        #[arg(value_enum)]
+        object_type: ObjectType,
+
+        /// The path to the file
+        path: OsString,
+
+        /// If true, the object will be stored in the repository
+        #[arg(long)]
+        store: bool,
     },
 }
 
@@ -98,6 +112,34 @@ fn main() {
                     eprintln!("{}", e);
                     std::process::exit(1);
                 }
+            }
+        }
+        Command::HashFile {
+            object_type,
+            path,
+            store,
+        } => {
+            let path = PathBuf::from(path);
+            let data = std::fs::read(&path).unwrap_or_else(|e| {
+                eprintln!("Failed to read file {}: {}", path.display(), e);
+                std::process::exit(1);
+            });
+            let object = Object::new(object_type, data).unwrap_or_else(|e| {
+                eprintln!("Failed to create object: {}", e);
+                std::process::exit(1);
+            });
+            if store {
+                let repo = Repository::find(&base_path).unwrap_or_else(|e| {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                });
+                write_object(&object, &repo).unwrap_or_else(|e| {
+                    eprintln!("Failed to write object: {}", e);
+                    std::process::exit(1);
+                });
+                println!("Stored object with hash: {}", object.hash);
+            } else {
+                println!("Hash of file {}: {}", path.display(), object.hash);
             }
         }
     }
