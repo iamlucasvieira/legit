@@ -1,4 +1,4 @@
-mod objects;
+pub mod objects;
 mod repository;
 mod settings;
 

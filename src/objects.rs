@@ -7,9 +7,9 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use itertools::Itertools;
 use sha1::{Digest, Sha1};
+use std::fmt::Write;
 use std::fs::File;
-use std::io::Read;
-use std::io::Write;
+use std::io::{Read, Write as _};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::EnumString;
@@ -81,10 +81,10 @@ impl TryFrom<&str> for ObjectHash {
 
 impl ObjectHash {
     pub fn to_hex(&self) -> String {
-        self.0
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        self.0.iter().fold(String::new(), |mut output, b| {
+            let _ = write!(output, "{b:02X}");
+            output
+        })
     }
 
     /// Splits the string representation into the two components used by Git's
@@ -145,7 +145,7 @@ pub fn read_object(repo: &Repository, hash: &ObjectHash) -> Result<Object> {
     Object::new(object_type, data)
 }
 
-fn write_object(obj: &Object, repo: &Repository) -> Result<ObjectHash> {
+pub fn write_object(obj: &Object, repo: &Repository) -> Result<ObjectHash> {
     let (dir, file) = obj.hash.as_path_parts();
     let object_path: PathBuf = repo.gitdir.join("objects").join(dir).join(file);
     if object_path.exists() {
