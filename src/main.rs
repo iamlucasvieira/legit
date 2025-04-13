@@ -1,4 +1,5 @@
 use clap::Parser;
+use legit::objects::{read_object, ObjectHash, ObjectType};
 use legit::Repository;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -24,6 +25,16 @@ enum Command {
 
     /// Display information about the repository
     Config,
+
+    /// Provide contents of a repository object
+    CatFile {
+        /// The type of the object (e.g., commit, tree, blob)
+        #[arg(value_enum)]
+        object_type: ObjectType,
+
+        /// The hash of the object
+        hash: String,
+    },
 }
 
 fn main() {
@@ -57,6 +68,31 @@ fn main() {
             match repo {
                 Ok(repo) => {
                     println!("{:#?}", repo.settings());
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::CatFile { hash, .. } => {
+            let repo = Repository::find(&base_path);
+            let hash = ObjectHash::from_hex(hash.as_str()).unwrap_or_else(|_| {
+                eprintln!("Invalid hash format");
+                std::process::exit(1);
+            });
+            match repo {
+                Ok(repo) => {
+                    let object = read_object(&repo, &hash);
+                    match object {
+                        Ok(obj) => {
+                            println!("{:#?}", obj);
+                        }
+                        Err(e) => {
+                            eprintln!("{}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("{}", e);

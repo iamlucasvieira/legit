@@ -15,7 +15,7 @@ use std::str::FromStr;
 use strum::EnumString;
 
 /// ObjectType represents the type of object in a git repository
-#[derive(Debug, PartialEq, EnumString, strum::Display)]
+#[derive(Debug, PartialEq, EnumString, Clone, strum::Display)]
 #[strum(serialize_all = "lowercase")]
 pub enum ObjectType {
     Blob,
@@ -64,8 +64,38 @@ impl Object {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectHash(GenericArray<u8, U20>);
 
+impl ObjectHash {
+    pub fn from_hex(hex: &str) -> Result<Self> {
+        if hex.len() != 40 {
+            bail!(
+                "Invalid hash length: expected 40 characters, got {}",
+                hex.len()
+            );
+        }
+        let bytes = hex
+            .as_bytes()
+            .chunks(2)
+            .map(|chunk| {
+                let byte_str = std::str::from_utf8(chunk).unwrap();
+                u8::from_str_radix(byte_str, 16).unwrap()
+            })
+            .collect::<Vec<u8>>();
+        if bytes.len() != 20 {
+            bail!(
+                "Invalid hash length: expected 20 bytes, got {}",
+                bytes.len()
+            );
+        }
+        let mut array = GenericArray::<u8, U20>::default();
+        array.copy_from_slice(&bytes);
+        Ok(ObjectHash(array))
+    }
+}
+
 impl TryFrom<&[u8]> for ObjectHash {
     type Error = anyhow::Error;
+
+    /// Create a ObjectHash. Uses SHA-1 to hash the input data.
     fn try_from(slice: &[u8]) -> Result<Self> {
         let mut hasher = Sha1::new();
         hasher.update(slice);
@@ -81,6 +111,8 @@ impl TryFrom<&[u8]> for ObjectHash {
 
 impl TryFrom<&str> for ObjectHash {
     type Error = anyhow::Error;
+
+    /// Create a ObjectHash from a string. Uses SHA-1 to hash the input data.
     fn try_from(s: &str) -> Result<Self> {
         ObjectHash::try_from(s.as_bytes())
     }
