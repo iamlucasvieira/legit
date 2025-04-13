@@ -32,6 +32,7 @@ pub struct Object {
 }
 
 impl Object {
+    /// Create a new Git object
     pub fn new(object_type: ObjectType, data: Vec<u8>) -> Result<Self> {
         let object_data = format!(
             "{} {}\0{}",
@@ -47,13 +48,19 @@ impl Object {
         })
     }
 
-    pub fn size(&self) -> usize {
-        self.data.len()
+    /// Return the file path of the object in the repository
+    pub fn file_path(&self, repo: &Repository) -> PathBuf {
+        let (dir, file) = self.hash.as_path_parts();
+        repo.gitdir().join("objects").join(dir).join(file)
+    }
+
+    /// Return the header of the object
+    pub fn header(&self) -> String {
+        format!("{} {}\0", self.object_type, self.data.len())
     }
 }
 
 /// A newtype for a Git hash which guarantees that the hash is exactly 20 bytes long.
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectHash(GenericArray<u8, U20>);
 
@@ -106,7 +113,7 @@ impl ObjectHash {
 /// validates the size, and returns an `Object`.
 pub fn read_object(repo: &Repository, hash: &ObjectHash) -> Result<Object> {
     let (dir, file) = hash.as_path_parts();
-    let object_path: PathBuf = repo.gitdir.join("objects").join(dir).join(file);
+    let object_path: PathBuf = repo.gitdir().join("objects").join(dir).join(file);
     if !object_path.exists() {
         bail!("Object not found at {}", object_path.display());
     }
@@ -145,9 +152,16 @@ pub fn read_object(repo: &Repository, hash: &ObjectHash) -> Result<Object> {
     Object::new(object_type, data)
 }
 
+/// Writes a Git object to the repository.
+///
+/// The object is stored under `.git/objects/<dir>/<file>` where the directory
+/// is the first two characters of the hash (as a string) and the file is the rest.
+/// The object file is stored compressed (zlib). The function first checks if
+/// the object already exists at the specified path. If it does, an error
+/// is returned. If not, it creates the necessary directories and writes
+/// the object to the file.
 pub fn write_object(obj: &Object, repo: &Repository) -> Result<ObjectHash> {
-    let (dir, file) = obj.hash.as_path_parts();
-    let object_path: PathBuf = repo.gitdir.join("objects").join(dir).join(file);
+    let object_path = obj.file_path(repo);
     if object_path.exists() {
         bail!("Object already exists at {}", object_path.display());
     }
@@ -159,7 +173,7 @@ pub fn write_object(obj: &Object, repo: &Repository) -> Result<ObjectHash> {
         )
     })?;
 
-    let header = format!("{} {}\0", obj.object_type, obj.size());
+    let header = obj.header();
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(header.as_bytes())?;
     encoder.write_all(&obj.data)?;
@@ -177,8 +191,6 @@ mod tests {
     use crate::repository::Repository;
     use tempfile::TempDir;
 
-    const TEST_DATA: &[u8] = b"test data";
-
     #[test]
     fn test_git_hash_from_str() {
         let hash_str = "1234567890abcdef1234";
@@ -195,24 +207,129 @@ mod tests {
         assert_eq!(file.len(), 38);
     }
 
-    // Helper struct to ensure TempDir lives as long as Repository
-    struct TestRepo(Repository);
+    #[test]
+    fn test_read_object() {
+        let tempdir = TempDir::new().unwrap();
+        let object = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        write_object(&object, &repo).unwrap();
+        let result = read_object(&repo, &object.hash);
+        assert!(result.is_ok());
+    }
 
-    impl TestRepo {
-        pub fn new(tempdir: &TempDir, object: &Object) -> Self {
-            let repo = Repository::new(tempdir.path()).unwrap();
-            repo.create().unwrap();
-            write_object(object, &repo).unwrap();
-            TestRepo(repo)
+    #[test]
+    fn test_read_object_object_doesnt_exist() {
+        let tempdir = TempDir::new().unwrap();
+        let object_written = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let object_not_written = Object::new(ObjectType::Blob, b"other data".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        write_object(&object_written, &repo).unwrap();
+        let result = read_object(&repo, &object_not_written.hash);
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Object not found at"));
+    }
+
+    #[test]
+    fn test_read_object_not_encoded() {
+        let tempdir = TempDir::new().unwrap();
+        let object = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        let object_path = object.file_path(&repo);
+        std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+        std::fs::write(&object_path, b"not compressed data").unwrap();
+        let result = read_object(&repo, &object.hash);
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to decompress object data"));
+    }
+
+    struct ReadObjectTestCase {
+        pub header: &'static str,
+        pub data: &'static [u8],
+        pub expected_error: Option<&'static str>,
+    }
+
+    #[test]
+    fn test_read_object_invalid_header() {
+        let test_cases = [
+            ReadObjectTestCase {
+                header: "blob 4",
+                data: b"test",
+                expected_error: Some("missing null terminator"),
+            },
+            ReadObjectTestCase {
+                header: "blob\0",
+                data: b"test",
+                expected_error: Some("missing type or size"),
+            },
+            ReadObjectTestCase {
+                header: "blob a\0",
+                data: b"test",
+                expected_error: Some("Invalid size"),
+            },
+            ReadObjectTestCase {
+                header: "invalid 2\0",
+                data: b"test",
+                expected_error: Some("Invalid object type"),
+            },
+            ReadObjectTestCase {
+                header: "blob 30\0",
+                data: b"test",
+                expected_error: Some("Object size mismatch"),
+            },
+            ReadObjectTestCase {
+                header: "blob 4\0",
+                data: b"test",
+                expected_error: None,
+            },
+        ];
+
+        let tempdir = TempDir::new().unwrap();
+        let object = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        let object_path = object.file_path(&repo);
+        std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+
+        for tc in test_cases.iter() {
+            let content = format!("{}{}", tc.header, String::from_utf8_lossy(tc.data));
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(content.as_bytes()).unwrap();
+            let compressed_data = encoder.finish().unwrap();
+            std::fs::write(&object_path, compressed_data).unwrap();
+
+            let result = read_object(&repo, &object.hash);
+            if let Some(expected_error) = tc.expected_error {
+                assert!(result.unwrap_err().to_string().contains(expected_error));
+            } else {
+                assert!(result.is_ok());
+            }
         }
     }
 
     #[test]
-    fn test_read_object() {
+    fn test_write_object() {
         let tempdir = TempDir::new().unwrap();
-        let object = Object::new(ObjectType::Blob, TEST_DATA.to_vec()).unwrap();
-        let test_repo = TestRepo::new(&tempdir, &object);
-        let result = read_object(&test_repo.0, &object.hash);
+        let object = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        let result = write_object(&object, &repo);
+        let object_path = object.file_path(&repo);
         assert!(result.is_ok());
+        assert!(object_path.exists());
+    }
+
+    #[test]
+    fn test_write_object_object_already_exist() {
+        let tempdir = TempDir::new().unwrap();
+        let object = Object::new(ObjectType::Blob, b"test".to_vec()).unwrap();
+        let repo = Repository::new(tempdir.path()).unwrap();
+        write_object(&object, &repo).unwrap();
+        let result = write_object(&object, &repo);
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Object already exists at"));
     }
 }

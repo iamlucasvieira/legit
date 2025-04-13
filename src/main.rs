@@ -43,11 +43,7 @@ fn main() {
             let path = path.map_or(base_path.clone(), PathBuf::from);
             let repo = Repository::new(&path);
             match repo {
-                Ok(repo) => {
-                    if let Err(e) = repo.create() {
-                        eprintln!("{}", e);
-                        std::process::exit(1);
-                    }
+                Ok(_) => {
                     println!("Initialized empty git repository in {}", path.display());
                 }
                 Err(e) => {
@@ -60,7 +56,7 @@ fn main() {
             let repo = Repository::find(&base_path);
             match repo {
                 Ok(repo) => {
-                    println!("{:#?}", repo.settings);
+                    println!("{:#?}", repo.settings());
                 }
                 Err(e) => {
                     eprintln!("{}", e);

@@ -6,12 +6,31 @@ use std::path::{Path, PathBuf};
 // Repository represents a git repository
 #[derive(Debug)]
 pub struct Repository {
-    pub worktree: PathBuf,
-    pub gitdir: PathBuf,
-    pub settings: Settings,
+    worktree: PathBuf,
+    gitdir: PathBuf,
+    settings: Settings,
 }
 
 impl Repository {
+    /// Return the worktree path
+    pub fn worktree(&self) -> &Path {
+        &self.worktree
+    }
+
+    /// Return the git directory path
+    pub fn gitdir(&self) -> &Path {
+        &self.gitdir
+    }
+
+    /// Return the settings of the repository
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Find a git repository by traversing up the directory tree
+    ///
+    /// /// This function looks for a `.git` directory in the specified path or its parent
+    /// directories.
     pub fn find(path: &Path) -> Result<Repository> {
         let gitdir = path.join(".git");
         if !gitdir.exists() {
@@ -29,10 +48,15 @@ impl Repository {
     }
 
     /// Create a new Repository instance
+    ///
+    /// This function initializes a new git repository at the specified path.
+    /// It creates the necessary directories and files for a git repository.
     pub fn new(path: &Path) -> Result<Repository> {
         let worktree = path.to_owned();
         let gitdir = worktree.join(".git");
         let settings = Settings::new()?;
+
+        Repository::create(&worktree, &gitdir, &settings)?;
 
         Ok(Repository {
             worktree,
@@ -42,38 +66,38 @@ impl Repository {
     }
 
     /// Populate the git directory with the necessary files and directories
-    pub fn create(&self) -> Result<()> {
-        let version = self.settings.core.repositoryformatversion;
+    fn create(worktree: &Path, gitdir: &Path, settings: &Settings) -> Result<()> {
+        let version = settings.core.repositoryformatversion;
         if version != 0 {
             anyhow::bail!("Unsupported repositoryformatversion: {}", version);
         }
 
-        if !self.worktree.exists() {
-            fs::create_dir_all(&self.worktree)?;
-        }
-
-        if self.gitdir.exists() {
+        if gitdir.exists() {
             anyhow::bail!("Directory is already a git repository");
         }
 
-        fs::create_dir_all(&self.gitdir)?;
+        if !worktree.exists() {
+            fs::create_dir_all(worktree)?;
+        }
+
+        fs::create_dir_all(gitdir)?;
 
         let dirs = ["branches", "objects", "refs/tags", "refs/heads"];
         for dir in dirs.iter() {
-            fs::create_dir_all(self.gitdir.join(dir))?;
+            fs::create_dir_all(gitdir.join(dir))?;
         }
 
-        let description = self.gitdir.join("description");
+        let description = gitdir.join("description");
         fs::write(
             description,
             "Unnamed repository; edit this file 'description' to name the repository.",
         )?;
 
-        let head = self.gitdir.join("HEAD");
+        let head = gitdir.join("HEAD");
         fs::write(head, "ref: refs/heads/master\n")?;
 
-        let config = self.gitdir.join("config");
-        let config_content = toml::to_string(&self.settings)?;
+        let config = gitdir.join("config");
+        let config_content = toml::to_string(settings)?;
         fs::write(config, config_content)?;
 
         Ok(())
@@ -95,8 +119,7 @@ mod tests {
     #[test]
     fn test_create() {
         let tempdir = TempDir::new().unwrap();
-        let repo = Repository::new(tempdir.path()).unwrap();
-        repo.create().unwrap();
+        let _ = Repository::new(tempdir.path()).unwrap();
         let expected_dirs = [
             ".git",
             ".git/branches",
