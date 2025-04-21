@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+default-members = ["crates/legit"]
 
 [workspace.package]
 authors = ["Lucas Vieira dos Santos <lucas6eng@gmail.com>"]
