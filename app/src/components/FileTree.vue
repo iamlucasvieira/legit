@@ -10,7 +10,7 @@
 
 <script lang="ts">
 import { defineComponent, onMounted } from "vue";
-import { useFileTreeStore } from "@/stores/fileTree";
+import { useFileTreeStore } from "../stores/fileTree";
 import FileTreeNode from "./FileTreeNode.vue";
 import * as path from "@tauri-apps/api/path";
 

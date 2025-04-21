@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import FileTree from "@components/FileTree.vue";
+import FileTree from "./components/FileTree.vue";
 
 const currentDir = ref(".");
 const files = ref([]);

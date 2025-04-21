@@ -21,7 +21,7 @@
 
 <script lang="ts">
 import { defineComponent, computed } from "vue";
-import { useFileTreeStore, FileNode } from "@/stores/fileTree";
+import { useFileTreeStore, FileNode } from "../stores/fileTree";
 
 export default defineComponent({
   name: "FileTreeNode",
