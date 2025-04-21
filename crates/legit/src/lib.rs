@@ -1,3 +1,4 @@
+pub mod commits;
 pub mod objects;
 mod repository;
 mod settings;

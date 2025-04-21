@@ -427,7 +427,6 @@ name = "legit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "config",
  "digest",
  "flate2",
@@ -438,6 +437,14 @@ dependencies = [
  "strum",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "legit_cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "legit",
 ]
 
 [[package]]

@@ -1,0 +1,9 @@
+[package]
+name = "legit_cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap = { version = "4.5.34", features = ["derive"] }
+legit.workspace = true 
